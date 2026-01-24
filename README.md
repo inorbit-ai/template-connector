@@ -8,6 +8,7 @@ This is a template repository for building InOrbit connectors. It contains minim
 2. Run `pipx run cookiecutter gh:inorbit-ai/inorbit-connector-cookiecutter`. This will install the [cookiecutter package](https://cookiecutter.readthedocs.io/) if you don't have it already and download the InOrbit connector cookiecutter.
 3. Follow the prompts to create a new connector.
 4. Once all questions are answered, the cookiecutter will generate a bunch of files and directories for you to start working on your connector.
+5. Read the notice at the top of the generated README.md file and follow the instructions to complete the setup.
 
 ## Contributing
 
