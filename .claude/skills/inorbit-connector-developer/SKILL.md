@@ -109,7 +109,7 @@ After writing the PRD to disk, tell the user the file path and ask them to revie
 5. What is the target directory for the project?
 
 The answer to question 3 determines:
-- Whether `reference/mission-execution.md` is relevant
+- Whether [reference/mission-execution.md](reference/mission-execution.md) is relevant
 - Which CaC objects to configure (executeMission/cancelMission/updateMission actions, MissionTracking with edge executor, MissionDefinition)
 
 **Update the PRD file on disk** based on feedback before proceeding. The user may also edit the file directly — re-read it before continuing.
@@ -147,7 +147,7 @@ uv lock && uv sync --extra=dev && uv run pytest && uv run ruff check
 
 ### Phase 6: Implementation
 
-Read `reference/framework-api.md` and `reference/implementation-patterns.md` for API surface and code examples.
+Read [reference/framework-api.md](reference/framework-api.md) and [reference/implementation-patterns.md](reference/implementation-patterns.md) for API surface and code examples.
 
 Implement in this order:
 1. **Configuration models** (`src/config/models.py`) — target-specific fields, per-robot config, validators, env prefix
@@ -159,7 +159,7 @@ Implement in this order:
 
 ### Phase 7: Testing
 
-Read `reference/implementation-patterns.md#testing` for test patterns.
+Read [reference/implementation-patterns.md#testing](reference/implementation-patterns.md) for test patterns.
 
 Key points:
 - pytest-asyncio for async tests
@@ -180,7 +180,7 @@ Update `README.md` with:
 
 ### Phase 9: CaC Configuration
 
-Read `reference/cac-objects.md` for InOrbit Configuration-as-Code reference.
+Read [reference/cac-objects.md](reference/cac-objects.md) for InOrbit Configuration-as-Code reference.
 
 Create `cac/` directory with YAML files for:
 - ActionDefinition — custom commands exposed in InOrbit UI
@@ -189,14 +189,14 @@ Create `cac/` directory with YAML files for:
 - RobotFootprint — robot body and buffer polygons
 - Preferences — UI panel settings
 
-**If edge mission execution is needed**: Also read `reference/mission-execution.md` and ensure:
+**If edge mission execution is needed**: Also read [reference/mission-execution.md](reference/mission-execution.md) and ensure:
 - executeMission, cancelMission, updateMission actions are defined (account scope)
 - MissionTracking includes `execution.executor.type: edge`
 - MissionDefinition objects define available missions
 
 ## Coding Conventions
 
-See `guidelines.md` for full details. Key points:
+See [guidelines.md](guidelines.md) for full details. Key points:
 
 - **Imports**: stdlib -> third-party -> inorbit framework -> local
 - **Types**: Python 3.13+ syntax (`str | None`, `dict[str, Any]`)
