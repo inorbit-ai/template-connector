@@ -75,11 +75,25 @@ When provided a robot/fleet API specification (OpenAPI, docs, or URL), analyze i
 
 ### Phase 2: PRD Generation
 
-Create a Product Requirements Document covering:
+**Write a PRD file to disk** at `.prd/PRD.md` (dot-prefixed directory so the cookiecutter won't overwrite it). This file is a key artifact — the user will review and edit it before implementation begins.
+
+The PRD must be **exhaustive**. Cover every data source and command the API supports, not just a representative subset. The goal is to publish **all relevant data** and implement **all useful actions**.
+
+Contents:
 1. Overview (target system, integration type: fleet or single-robot, API version)
 2. Authentication & connection strategy
-3. Data publishing (pose, odometry, key-values, system stats, maps)
-4. Command handling (navigation goals, custom commands, missions)
+3. Data publishing — **list every data point** that can be reported:
+   - Pose (source endpoint, coordinate system, units)
+   - Odometry (source or derivation method)
+   - Key-values: **one row per key** (battery, state, errors, mode, mission status, firmware version, network status, etc. — include everything available from the API)
+   - System stats (CPU, RAM, disk — if available)
+   - Maps (format, metadata)
+4. Command handling — **list every command** that can be implemented:
+   - Navigation goals
+   - State control (pause, resume, dock, undock, etc.)
+   - Mission/task management (queue, abort, clear queue, etc.)
+   - Configuration commands (localize, set mode, etc.)
+   - **Include one row per command** with: command name, API endpoint, parameters, notes
 5. Configuration schema (connector-level, per-robot)
 6. Error handling and retry strategy
 7. Testing strategy
@@ -87,19 +101,18 @@ Create a Product Requirements Document covering:
 
 ### Phase 3: Feedback Loop
 
-After generating the PRD, ask the user:
+After writing the PRD to disk, tell the user the file path and ask them to review it. Ask specifically:
 1. Are the identified endpoints and data mappings correct?
-2. Are there additional custom commands needed?
-3. What specific key-values should be tracked?
-4. **Does this connector need edge mission execution?** (i.e., should missions be dispatched and executed locally via custom behavior trees, or using the default behavior available through cloud missions execution?)
-5. Any special authentication or SSL requirements?
-6. What is the target directory for the project?
+2. **Are there any data sources or commands missing?** (The PRD should be exhaustive — flag anything from the API that was intentionally excluded and explain why.)
+3. **Does this connector need edge mission execution?** (i.e., should missions be dispatched and executed locally via custom behavior trees, or using the default behavior available through cloud missions execution?)
+4. Any special authentication or SSL requirements?
+5. What is the target directory for the project?
 
-The answer to question 4 determines:
+The answer to question 3 determines:
 - Whether `reference/mission-execution.md` is relevant
 - Which CaC objects to configure (executeMission/cancelMission/updateMission actions, MissionTracking with edge executor, MissionDefinition)
 
-Update the PRD based on feedback before proceeding.
+**Update the PRD file on disk** based on feedback before proceeding. The user may also edit the file directly — re-read it before continuing.
 
 ### Phase 4: Project Generation
 
@@ -116,16 +129,18 @@ Guide the user through the interactive prompts:
 
 **Critical**: Read the generated `README.md` and follow the instructions at the top (replacements, TODOs).
 
-**Check for dependency updates:**
-```bash
-uv pip index versions inorbit-connector
-uv pip index versions inorbit-edge
-uv pip index versions inorbit-edge-executor  # only if edge missions needed
-```
+**Check for dependency updates** by running `uv pip index versions` for each dependency in `pyproject.toml` (both `[project.dependencies]` and `[project.optional-dependencies.dev]`). Then present a summary table like:
 
-**If InOrbit dependency updates are available**: Present findings and ask the user before updating. These packages may have breaking changes.
+| Package | Pinned Version | Latest Available | Update? |
+|---------|---------------|-----------------|---------|
+| inorbit-connector | ~=2.2.0 | 2.3.1 | ? |
+| inorbit-edge | ... | ... | ? |
+| pytest | ~=8.4 | 8.5.2 | ? |
+| ... | ... | ... | ... |
 
-**Lock, install, and verify:**
+**Do NOT update `pyproject.toml` until the user reviews the table and confirms which versions to upgrade.** InOrbit packages in particular may have breaking changes.
+
+**After user approval**, update `pyproject.toml`, then lock, install, and verify:
 ```bash
 uv lock && uv sync --extra=dev && uv run pytest && uv run ruff check
 ```
