@@ -2,7 +2,7 @@
 
 CaC defines how robots appear and behave in InOrbit. Files go in the `cac/` directory with multi-document YAML (separated by `---`). All objects use `apiVersion: v0.1`.
 
-For full reference, see: https://developer.inorbit.ai/docs#configuring-data-sources
+For full reference, see: https://developer.inorbit.ai/docs#config-api-kinds-reference
 
 ## Scope
 
