@@ -1,7 +1,6 @@
 ---
 name: inorbit-connector-developer
 description: Build or improve InOrbit robot connectors. Use when creating a new connector from an API spec, improving an existing connector, or asking about InOrbit connector architecture. Covers the full lifecycle from API analysis through implementation, testing, CaC configuration, and optionally edge mission execution.
-disable-model-invocation: true
 license: MIT
 author: InOrbit, Inc.
 version: 0.1.0
@@ -26,8 +25,25 @@ your-connector (new project)
 - Edge missions executor (optional): `github.com/inorbit-ai/inorbit_edge_executor`
 - Project generator: `github.com/inorbit-ai/inorbit-connector-cookiecutter`
 
-**Reference connectors (study for patterns):**
-- `github.com/inorbit-ai/inorbit-robot-connectors` — collection of single-robot connectors (some with edge missions, some without)
+**Reference connectors:**
+- `github.com/inorbit-ai/inorbit-robot-connectors/omron_flowcore_connector` — **recommended
+  code reference**. Uses latest framework (v2.2), latest edge executor (v4), and correct
+  `parse_custom_command_args` + `@override` patterns throughout. Study this for architecture,
+  command handling structure, and edge mission integration.
+- `github.com/inorbit-ai/inorbit-robot-connectors/mir_connector` — useful if building a MiR
+  connector. Mostly modern but has accumulated some older patterns due to its age; use for
+  MiR API structure, not as a code pattern reference.
+
+## Do Not
+
+These patterns appear in older connectors and in training data. Never use:
+
+| Wrong | Right | Why |
+|-------|-------|-----|
+| `dict(zip(args[::2], args[1::2]))` | `parse_custom_command_args(args)` | Framework handles edge cases and validation |
+| `Optional[str]` | `str \| None` | Python 3.10+ union syntax, project standard |
+| `battery=raw_value` (0-100) | `battery=raw_value / 100.0` | InOrbit expects 0-1 float |
+| `# @override` (comment) | `@override` (import + decorator) | Static analysis can't enforce commented decorators |
 
 ## Entry Points
 
@@ -72,6 +88,9 @@ When provided a robot/fleet API specification (OpenAPI, docs, or URL), analyze i
 | Key-values | Battery (0-1), state, errors, custom | Status endpoints |
 | System stats | CPU %, RAM %, disk % | System endpoint (if available) |
 | Maps | Image + origin + resolution + frame_id | Map endpoint |
+
+> **Battery**: InOrbit expects a 0-1 float. Fleet APIs almost universally return 0-100. Always
+> divide by 100.0 at publish time. Publishing raw 0-100 values silently breaks the battery widget.
 
 ### Phase 2: PRD Generation
 
@@ -157,32 +176,15 @@ Implement in this order:
 5. **Main connector** (`src/connector.py`) — FleetConnector or Connector subclass with all overrides
 6. **Entry point** — YAML config loading, signal handling
 
-### Phase 7: Testing
+### Phase 7: CaC Configuration
 
-Read [reference/implementation-patterns.md#testing](reference/implementation-patterns.md) for test patterns.
-
-Key points:
-- pytest-asyncio for async tests
-- pytest-httpx for HTTP mocking
-- Test config validation, API client, data transforms, command handling
-- Run: `uv run pytest && uv run ruff check`
-
-### Phase 8: Documentation
-
-Update `README.md` with:
-1. Overview — what target system this connects
-2. Prerequisites — target system version, required credentials
-3. Installation — how to install
-4. Configuration — all config options with examples
-5. Usage — how to run
-6. Commands — available custom commands
-7. Troubleshooting — common issues
-
-### Phase 9: CaC Configuration
+CaC is not an afterthought. Write each ActionDefinition when you implement its command, and
+each DataSourceDefinition when you add a key-value. The `cac/` skeleton in the generated project
+has placeholder files — fill them in as you go, not after implementation is complete.
 
 Read [reference/cac-objects.md](reference/cac-objects.md) for InOrbit Configuration-as-Code reference.
 
-Create `cac/` directory with YAML files for:
+Fill in `cac/` YAML files for:
 - ActionDefinition — custom commands exposed in InOrbit UI
 - DataSourceDefinition — key-value and derived data sources
 - MissionTracking — mission tracking configuration
@@ -193,6 +195,27 @@ Create `cac/` directory with YAML files for:
 - executeMission, cancelMission, updateMission actions are defined (account scope)
 - MissionTracking includes `execution.executor.type: edge`
 - MissionDefinition objects define available missions
+
+### Phase 8: Testing
+
+Read [reference/implementation-patterns.md#testing](reference/implementation-patterns.md) for test patterns.
+
+Key points:
+- pytest-asyncio for async tests
+- pytest-httpx for HTTP mocking
+- Test config validation, API client, data transforms, command handling
+- Run: `uv run pytest && uv run ruff check`
+
+### Phase 9: Documentation
+
+Update `README.md` with:
+1. Overview — what target system this connects
+2. Prerequisites — target system version, required credentials
+3. Installation — how to install
+4. Configuration — all config options with examples
+5. Usage — how to run
+6. Commands — available custom commands
+7. Troubleshooting — common issues
 
 ## Coding Conventions
 
