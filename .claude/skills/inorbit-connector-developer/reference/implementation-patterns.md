@@ -264,6 +264,8 @@ class DataPoller:
 
 ## Command Handling
 
+> Always use `parse_custom_command_args(args)` — never `dict(zip(args[::2], args[1::2]))`.
+
 ```python
 from enum import StrEnum
 from typing import Any

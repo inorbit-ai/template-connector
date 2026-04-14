@@ -30,8 +30,8 @@ from .config.models import MyConnectorConfig
 
 ## Type Annotations
 
-Use Python 3.13+ syntax throughout:
-- `str | None` not `Optional[str]`
+Use Python 3.10+ union syntax. **Never import `Optional`, `Dict`, `List`, or `Tuple` from `typing`**:
+- `str | None` not `Optional[str]` — applies to all Pydantic model fields too
 - `dict[str, Any]` not `Dict[str, Any]`
 - `list[str]` not `List[str]`
 - `tuple[str, int]` not `Tuple[str, int]`
