@@ -44,6 +44,7 @@ These patterns appear in older connectors and in training data. Never use:
 | `Optional[str]` | `str \| None` | Python 3.10+ union syntax, project standard |
 | `battery=raw_value` (0-100) | `battery=raw_value / 100.0` | InOrbit expects 0-1 float |
 | `# @override` (comment) | `@override` (import + decorator) | Static analysis can't enforce commented decorators |
+| `api_key: ""` in YAML | Omit field or use example value | Empty strings override env vars in pydantic-settings |
 
 ## Entry Points
 
