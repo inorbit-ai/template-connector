@@ -690,6 +690,8 @@ connector_type: my_target
 update_freq: 1.0
 
 connector_config:
+  # Use real example values, not empty strings — pydantic-settings treats ""
+  # as an explicit value that overrides env vars.
   host: 192.168.1.50
   port: 80
   username: admin
