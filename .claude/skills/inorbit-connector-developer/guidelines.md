@@ -4,7 +4,8 @@
 
 - **License**: MIT with REUSE compliance (`REUSE.toml` + `LICENSES/MIT.txt`)
 - **Linting**: ruff with `line-length = 100`
-- **Python**: Specify correct `requires-python` in pyproject.toml (typically `>=3.13`)
+- **Python**: Specify correct `requires-python` in pyproject.toml. The cookiecutter supports
+  3.10–3.13 (`>=3.10,<3.14`) and defaults the generated project to 3.13.
 - **Dependencies**: Use compatible version ranges (`~=` for minor pins, `>=` for minimum)
 
 ## Import Order

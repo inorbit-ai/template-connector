@@ -1,6 +1,6 @@
 # Framework API Reference
 
-Based on `inorbit-connector-python` v2.2.0. For full source, see `github.com/inorbit-ai/inorbit-connector-python`.
+Based on `inorbit-connector-python` v3.0.0. For full source, see `github.com/inorbit-ai/inorbit-connector-python`.
 
 ## FleetConnector
 
@@ -13,7 +13,7 @@ Base class for connectors managing multiple robots through a fleet API.
 ### Constructor
 
 ```python
-def __init__(self, config: ConnectorConfig, **kwargs) -> None:
+def __init__(self, config: ConnectorRootConfig, **kwargs) -> None:
 ```
 
 **Keyword arguments:**
@@ -21,12 +21,13 @@ def __init__(self, config: ConnectorConfig, **kwargs) -> None:
 - `default_user_scripts_dir` (str): Default `"~/.inorbit_connectors/connector-{ClassName}/local/"`
 - `create_user_scripts_dir` (bool): Default `False`
 - `register_custom_command_handler` (bool): Default `True`
-- `publish_connector_system_stats` (bool): Default `False`
+- `publish_connector_system_stats` (bool): Default `False` (requires the
+  `inorbit-connector[system-stats]` extra / `psutil`)
 
 ### Properties
 
 - `robot_ids -> list[str]`: Robot IDs from configuration
-- `_config`: The `ConnectorConfig` object
+- `_config`: The `ConnectorRootConfig` object
 - `_logger`: Logger instance (inherited, use for logging)
 
 ### Abstract Methods (must override)
@@ -140,7 +141,7 @@ Simpler variant for single-robot connectors. Extends `FleetConnector`.
 ### Constructor
 
 ```python
-def __init__(self, robot_id: str, config: ConnectorConfig, **kwargs) -> None:
+def __init__(self, robot_id: str, config: ConnectorRootConfig, **kwargs) -> None:
 ```
 
 Adds `robot_id: str` parameter. Stores as `self.robot_id`.
@@ -193,26 +194,67 @@ def _is_robot_online(self) -> bool:
 ## Configuration Models
 
 ```python
-from inorbit_connector.models import ConnectorConfig, RobotConfig, MapConfig, MapConfigTemp
+from inorbit_connector.models import (
+    ConnectorRootConfig,
+    ConnectorSpecificConfig,
+    RobotConfig,
+    MapConfig,
+    MapConfigTemp,
+)
 ```
 
-### ConnectorConfig
+> **v3 change**: The old `ConnectorConfig(BaseModel)` is gone. Configuration is now built from
+> two pydantic-settings `BaseSettings` classes — `ConnectorRootConfig` (top level) and
+> `ConnectorSpecificConfig` (vendor config). They resolve `INORBIT_*` environment variables and
+> `config/.env` **at instantiation time**, with init kwargs (YAML) taking precedence. There is no
+> `account_id` field anymore (the account ID is resolved automatically by the edge SDK).
+
+### ConnectorRootConfig
+
+Generic over the vendor config type. Parametrize it: `ConnectorRootConfig[MyTargetConfig]`.
 
 ```python
-class ConnectorConfig(BaseModel):
-    api_key: str | None = os.getenv("INORBIT_API_KEY")
-    api_url: HttpUrl = os.getenv("INORBIT_API_URL", INORBIT_CLOUD_SDK_ROBOT_CONFIG_URL)
+class ConnectorRootConfig(BaseSettings, Generic[T]):
+    # model_config: env_prefix="INORBIT_", env_file="config/.env",
+    #               env_ignore_empty=True, case_sensitive=False, extra="ignore"
+
+    api_key: str | None = None                       # INORBIT_API_KEY
+    connection_config_url: HttpUrl = ...             # INORBIT_CONNECTION_CONFIG_URL (MQTT config endpoint)
+    api_url: HttpUrl = ...                           # INORBIT_API_URL (REST API, default INORBIT_DEFAULT_API_URL)
     connector_type: str
-    connector_config: BaseModel          # Your target-specific config
-    update_freq: float = 1.0             # Hz
+    connector_config: T                              # a ConnectorSpecificConfig subclass
+    use_websockets: bool = False
+    update_freq: float = 1.0                         # Hz
     location_tz: str = "UTC"
-    logging: LoggingConfig = LoggingConfig()
+    logging: LoggingConfig = LoggingConfig()         # logging.log_level (no top-level log_level)
     user_scripts_dir: DirectoryPath | None = None
-    account_id: str | None = None
     inorbit_robot_key: str | None = None
     maps: dict[str, MapConfig] = {}
     env_vars: dict[str, str] = {}
+    metrics: MetricsConfig = MetricsConfig()
     fleet: list[RobotConfig]
+```
+
+Built-in behavior (do not re-implement in subclasses):
+- Requires `api_key` **or** `inorbit_robot_key`, else raises `ValidationError` at instantiation.
+- Validates `connector_type` equals the `CONNECTOR_TYPE` class var of the `connector_config` class.
+- Enforces non-empty fleet and unique `robot_id` across the fleet.
+- `to_singular_config(robot_id) -> Self` filters the config down to a single robot.
+- Pass `_env_file=None` (or an explicit path) to control dotenv reading for root **and** nested
+  config — used in tests to avoid reading `config/.env`.
+
+### ConnectorSpecificConfig
+
+Base for vendor-specific (fleet-wide) settings. Subclass it and set `CONNECTOR_TYPE`; the env-var
+prefix is derived automatically as `INORBIT_{CONNECTOR_TYPE}_`. **Do not** hand-write a
+`model_config = SettingsConfigDict(env_prefix=...)` — the base wires the prefix from `CONNECTOR_TYPE`.
+
+```python
+class ConnectorSpecificConfig(BaseSettings):
+    CONNECTOR_TYPE: ClassVar[str]
+    # env prefix auto-derived: INORBIT_{CONNECTOR_TYPE}_
+    # model_config: env_ignore_empty=True, case_sensitive=False,
+    #               env_file="config/.env", extra="ignore"
 ```
 
 ### RobotConfig
@@ -310,8 +352,8 @@ from inorbit_connector.utils import read_yaml
 ```
 
 ```python
-def read_yaml(fname: str, robot_id: str = None) -> dict:
-    """Read a YAML configuration file."""
+def read_yaml(fname: str) -> dict:
+    """Read a YAML configuration file. (v3: the `robot_id` parameter was removed.)"""
 ```
 
 ## Generated Project Structure
@@ -325,29 +367,39 @@ After running `pipx run cookiecutter gh:inorbit-ai/inorbit-connector-cookiecutte
 │   ├── <connector_slug>_connector.py    # Entry point with start()
 │   └── src/
 │       ├── __init__.py
-│       ├── connector.py                 # Main connector (add this)
-│       ├── commands.py                  # Command enums/models (add this)
-│       ├── api/                         # API integration (add this)
+│       ├── connector.py                 # Main connector (FleetConnector subclass, prefilled)
+│       ├── commands.py                  # CustomScripts enum + CommandModel imports (prefilled)
+│       ├── api/                         # API integration — ADD during implementation
 │       │   ├── __init__.py
 │       │   ├── client.py
 │       │   └── data_poller.py
 │       └── config/
 │           ├── __init__.py
-│           └── models.py                # Pydantic config models
+│           └── models.py                # Config models (ConnectorRootConfig / ConnectorSpecificConfig)
 ├── tests/
 │   ├── __init__.py
-│   ├── conftest.py
+│   ├── conftest.py                      # _clean_inorbit_env + _fast_asyncio_sleep fixtures
 │   └── test_config_models.py
 ├── config/
 │   ├── fleet.example.yaml
-│   └── example.env
-├── cac/                                 # CaC definitions (add this)
-│   └── *.yaml
+│   ├── example.env
+│   └── user_scripts/                    # example user scripts
+├── cac/                                 # CaC definitions (prefilled skeleton — fill in)
+│   ├── actions.yaml
+│   ├── data_sources.yaml
+│   ├── footprint.yaml
+│   ├── mission_tracking.yaml
+│   └── status_definition.yaml
 ├── docker/
 │   ├── Dockerfile
 │   ├── docker-compose.example.yaml
 │   └── build.sh
 ├── pyproject.toml
 ├── README.md
-└── REUSE.toml
+├── REUSE.toml
+└── LICENSES/MIT.txt
 ```
+
+> The cookiecutter generates `src/config/models.py`, `src/connector.py`, and `src/commands.py`
+> already prefilled with the v3 patterns. The `src/api/` package is **not** generated — add it
+> during implementation.

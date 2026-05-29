@@ -2,7 +2,7 @@
 
 **This file is only relevant when the connector needs edge mission execution** — i.e., missions dispatched from InOrbit and executed locally via behavior trees. If missions are only tracked via cloud API, this file is not needed.
 
-Based on `inorbit_edge_executor` v4.0.1. For full source, see `github.com/inorbit-ai/inorbit_edge_executor`.
+Based on `inorbit_edge_executor` v4.0.2. For full source, see `github.com/inorbit-ai/inorbit_edge_executor`.
 
 ## When to Use
 
@@ -212,6 +212,7 @@ await db.shutdown()
 
 ```python
 from inorbit_connector.commands import parse_custom_command_args, CommandFailure
+from inorbit_edge.robot import COMMAND_CUSTOM_COMMAND
 
 from .commands import CustomScripts
 
@@ -221,7 +222,7 @@ async def _inorbit_robot_command_handler(
 ) -> None:
     result_function = options["result_function"]
 
-    if command_name == "customCommand":
+    if command_name == COMMAND_CUSTOM_COMMAND:
         script_name, script_args = parse_custom_command_args(args)
 
         match script_name:
