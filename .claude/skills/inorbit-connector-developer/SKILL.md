@@ -26,10 +26,18 @@ your-connector (new project)
 - Project generator: `github.com/inorbit-ai/inorbit-connector-cookiecutter`
 
 **Reference connectors:**
-- `github.com/inorbit-ai/inorbit-robot-connectors/omron_flowcore_connector` — **recommended
-  code reference**. Uses latest framework (v2.2), latest edge executor (v4), and correct
-  `parse_custom_command_args` + `@override` patterns throughout. Study this for architecture,
-  command handling structure, and edge mission integration.
+
+> For **v3 config patterns** (`ConnectorRootConfig` / `ConnectorSpecificConfig` / `CONNECTOR_TYPE`),
+> the source of truth is the cookiecutter-generated project (`src/config/models.py`,
+> `src/connector.py`, `src/commands.py`) plus this skill's reference docs. The reference connectors
+> below predate v3 — use them for architecture and API integration, but translate any
+> `ConnectorConfig` / hand-written `env_prefix` / `account_id` patterns to the v3 form (see the
+> "Do Not" table).
+
+- `github.com/inorbit-ai/inorbit-robot-connectors/omron_flowcore_connector` — **recommended code
+  reference** for structure. Correct `parse_custom_command_args` + `@override` patterns and edge
+  executor v4 integration throughout. Study it for architecture, command handling, and edge
+  mission integration — but translate its config models to the v3 pattern.
 - `github.com/inorbit-ai/inorbit-robot-connectors/mir_connector` — useful if building a MiR
   connector. Mostly modern but has accumulated some older patterns due to its age; use for
   MiR API structure, not as a code pattern reference.
@@ -45,6 +53,10 @@ These patterns appear in older connectors and in training data. Never use:
 | `battery=raw_value` (0-100) | `battery=raw_value / 100.0` | InOrbit expects 0-1 float |
 | `# @override` (comment) | `@override` (import + decorator) | Static analysis can't enforce commented decorators |
 | `api_key: ""` in YAML | Omit field or use example value | Empty strings override env vars in pydantic-settings |
+| `ConnectorConfig` (BaseModel) | `ConnectorRootConfig[T]` + `ConnectorSpecificConfig` | v3 config is pydantic-settings; old class removed |
+| `SettingsConfigDict(env_prefix=...)` on vendor config | set `CONNECTOR_TYPE` class var | v3 derives the `INORBIT_{TYPE}_` prefix automatically |
+| `account_id` config field | (removed) | v3 resolves the account ID automatically via the edge SDK |
+| `"customCommand"` string literal | `COMMAND_CUSTOM_COMMAND` from `inorbit_edge.robot` | Use the constant, not a magic string |
 
 ## Entry Points
 
@@ -153,10 +165,12 @@ Guide the user through the interactive prompts:
 
 | Package | Pinned Version | Latest Available | Update? |
 |---------|---------------|-----------------|---------|
-| inorbit-connector | ~=2.2.0 | 2.3.1 | ? |
-| inorbit-edge | ... | ... | ? |
+| inorbit-connector | ~=3.0.0 | 3.0.x | ? |
 | pytest | ~=8.4 | 8.5.2 | ? |
 | ... | ... | ... | ... |
+
+> The generated `pyproject.toml` pins `inorbit-connector[system-stats]~=3.0.0`, which pulls in
+> `inorbit-edge>=3.0,<4.0` and `pydantic-settings` transitively — those are not listed directly.
 
 **Do NOT update `pyproject.toml` until the user reviews the table and confirms which versions to upgrade.** InOrbit packages in particular may have breaking changes.
 
@@ -170,7 +184,7 @@ uv lock && uv sync --extra=dev && uv run pytest && uv run ruff check
 Read [reference/framework-api.md](reference/framework-api.md) and [reference/implementation-patterns.md](reference/implementation-patterns.md) for API surface and code examples.
 
 Implement in this order:
-1. **Configuration models** (`src/config/models.py`) — target-specific fields, per-robot config, validators, env prefix
+1. **Configuration models** (`src/config/models.py`) — `ConnectorSpecificConfig` subclass (vendor fields, with `CONNECTOR_TYPE`), `RobotConfig` subclass (per-robot fields), and a `ConnectorRootConfig[...]` parametrization (top level + domain validators). The cookiecutter prefills this file.
 2. **API client** (`src/api/client.py`) — httpx.AsyncClient, retry, auth, SSL
 3. **Data poller** (`src/api/data_poller.py`) — background polling, local cache, getters
 4. **Command models** (`src/commands.py`) — StrEnum scripts, CommandModel validation
@@ -223,7 +237,7 @@ Update `README.md` with:
 See [guidelines.md](guidelines.md) for full details. Key points:
 
 - **Imports**: stdlib -> third-party -> inorbit framework -> local
-- **Types**: Python 3.13+ syntax (`str | None`, `dict[str, Any]`)
+- **Types**: Python 3.10+ syntax (`str | None`, `dict[str, Any]`)
 - **Override**: `@override` decorator on all overridden methods
 - **Logging**: `self._logger` (inherited) in connector, `logger = logging.getLogger(__name__)` elsewhere
 - **Enums**: `StrEnum` for string constants

@@ -6,28 +6,39 @@ Concrete code patterns from real connectors. Use as templates when implementing 
 
 ### Fleet Connector Config
 
-```python
-from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+Define a module-level `CONNECTOR_TYPE` constant, then build three classes: a `RobotConfig`
+subclass (per-robot fields), a `ConnectorSpecificConfig` subclass (fleet-wide vendor settings),
+and a `ConnectorRootConfig[...]` parametrization (top level). The env-var prefix
+(`INORBIT_MY_TARGET_`) is derived automatically from `CONNECTOR_TYPE` — don't set `env_prefix`
+yourself. The base `ConnectorRootConfig` already validates `connector_type` against
+`CONNECTOR_TYPE` and enforces unique `robot_id`, so subclass validators only add domain checks.
 
-from inorbit_connector.models import ConnectorConfig, RobotConfig
+```python
+from pydantic import model_validator
+
+from inorbit_connector.models import (
+    ConnectorRootConfig,
+    ConnectorSpecificConfig,
+    RobotConfig,
+)
+
+CONNECTOR_TYPE = "my_target"
 
 
 class MyRobotConfig(RobotConfig):
     """Per-robot configuration."""
 
-    robot_id: str                        # InOrbit robot ID
+    # robot_id (str) and cameras are inherited from RobotConfig
     fleet_robot_id: str | int            # Target system robot ID
 
 
-class MyTargetConfig(BaseSettings):
-    """Target system connection settings."""
+class MyTargetConfig(ConnectorSpecificConfig):
+    """Fleet-wide target system connection settings.
 
-    model_config = SettingsConfigDict(
-        env_prefix="INORBIT_MYTARGET_",
-        case_sensitive=False,
-        env_ignore_empty=True,
-    )
+    Fields are read from INORBIT_MY_TARGET_* env vars / config/.env when not set in YAML.
+    """
+
+    CONNECTOR_TYPE = CONNECTOR_TYPE
 
     host: str
     port: int = 80
@@ -38,49 +49,43 @@ class MyTargetConfig(BaseSettings):
     ssl_ca_bundle: str | None = None
 
 
-class MyConnectorConfig(ConnectorConfig):
+class MyConnectorConfig(ConnectorRootConfig[MyTargetConfig]):
     """Top-level connector configuration."""
 
-    connector_config: MyTargetConfig
-    fleet: list[MyRobotConfig]
+    fleet: list[MyRobotConfig]  # type: ignore[assignment]
 
-    @field_validator("connector_type")
-    @classmethod
-    def check_connector_type(cls, v: str) -> str:
-        if v != "my_target":
-            raise ValueError(f"Expected connector_type 'my_target', got '{v}'")
-        return v
-
-    @field_validator("fleet")
-    @classmethod
-    def validate_unique_fleet_ids(cls, v: list[MyRobotConfig]) -> list[MyRobotConfig]:
-        ids = [r.fleet_robot_id for r in v]
+    @model_validator(mode="after")
+    def validate_unique_fleet_robot_ids(self) -> "MyConnectorConfig":
+        ids = [r.fleet_robot_id for r in self.fleet]
         if len(ids) != len(set(ids)):
             raise ValueError("fleet_robot_id values must be unique")
-        return v
+        return self
 ```
 
 ### Single-Robot Config
 
+Same pattern — the vendor config still subclasses `ConnectorSpecificConfig` with a
+`CONNECTOR_TYPE`, and the top-level config is a `ConnectorRootConfig[...]` parametrization.
+
 ```python
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from inorbit_connector.models import ConnectorRootConfig, ConnectorSpecificConfig
 
-from inorbit_connector.models import ConnectorConfig
+CONNECTOR_TYPE = "my_target"
 
 
-class MyRobotTargetConfig(BaseSettings):
+class MyRobotTargetConfig(ConnectorSpecificConfig):
     """Target robot connection settings."""
 
-    model_config = SettingsConfigDict(
-        env_prefix="INORBIT_MYTARGET_",
-        case_sensitive=False,
-        env_ignore_empty=True,
-    )
+    CONNECTOR_TYPE = CONNECTOR_TYPE
 
     host: str
     port: int = 80
     username: str
     password: str
+
+
+class MyConnectorConfig(ConnectorRootConfig[MyRobotTargetConfig]):
+    """Top-level single-robot connector configuration."""
 ```
 
 ## API Client
@@ -328,9 +333,10 @@ async def _handle_custom_command(
 import logging
 from typing import override
 
-from inorbit_connector.connector import FleetConnector, CommandFailure
-from inorbit_connector.commands import parse_custom_command_args
+from inorbit_connector.commands import CommandFailure, parse_custom_command_args
+from inorbit_connector.connector import FleetConnector
 from inorbit_connector.models import MapConfigTemp
+from inorbit_edge.robot import COMMAND_CUSTOM_COMMAND
 
 from .api.client import MyAPIClient
 from .api.data_poller import DataPoller
@@ -344,7 +350,12 @@ class MyFleetConnector(FleetConnector):
     """Fleet connector for MyTarget system."""
 
     def __init__(self, config: MyConnectorConfig) -> None:
-        super().__init__(config)
+        super().__init__(
+            config,
+            register_user_scripts=True,
+            create_user_scripts_dir=True,
+            publish_connector_system_stats=True,
+        )
         self._api_client: MyAPIClient | None = None
         self._data_poller: DataPoller | None = None
 
@@ -398,7 +409,7 @@ class MyFleetConnector(FleetConnector):
     async def _inorbit_robot_command_handler(
         self, robot_id: str, command_name: str, args: list, options: dict
     ) -> None:
-        if command_name == "customCommand":
+        if command_name == COMMAND_CUSTOM_COMMAND:
             await self._handle_custom_command(robot_id, args, options)
 
     @override
@@ -420,6 +431,7 @@ class MyFleetConnector(FleetConnector):
 from typing import override
 
 from inorbit_connector.connector import Connector
+from inorbit_edge.robot import COMMAND_CUSTOM_COMMAND
 
 from .api.client import MyAPIClient
 from .config.models import MyConnectorConfig
@@ -452,7 +464,7 @@ class MyRobotConnector(Connector):
     async def _inorbit_command_handler(
         self, command_name: str, args: list, options: dict
     ) -> None:
-        if command_name == "customCommand":
+        if command_name == COMMAND_CUSTOM_COMMAND:
             await self._handle_custom_command(args, options)
 
     @override
@@ -511,8 +523,21 @@ def start() -> None:
 
 ```python
 import asyncio
+import os
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _clean_inorbit_env(monkeypatch):
+    """Remove all INORBIT_* env vars before each test.
+
+    Config models read INORBIT_* env vars at instantiation, so a stray var in the
+    dev environment could leak into a test. Clear them for deterministic tests.
+    """
+    for key in list(os.environ):
+        if key.startswith("INORBIT_"):
+            monkeypatch.delenv(key, raising=False)
 
 
 @pytest.fixture(autouse=True)
@@ -540,7 +565,8 @@ from my_connector.src.config.models import MyConnectorConfig
 @pytest.fixture()
 def base_config_data() -> dict:
     return {
-        "connector_type": "my_target",
+        "api_key": "test-api-key",          # auth is required in v3
+        "connector_type": "my_target",      # must match MyTargetConfig.CONNECTOR_TYPE
         "connector_config": {
             "host": "192.168.1.50",
             "port": 80,
@@ -554,8 +580,9 @@ def base_config_data() -> dict:
     }
 
 
+# Pass _env_file=None so the config does not read config/.env during tests.
 def test_valid_config(base_config_data: dict) -> None:
-    config = MyConnectorConfig(**base_config_data)
+    config = MyConnectorConfig(**base_config_data, _env_file=None)
     assert config.connector_type == "my_target"
     assert len(config.fleet) == 2
 
@@ -564,7 +591,14 @@ def test_duplicate_fleet_ids_rejected(base_config_data: dict) -> None:
     data = copy.deepcopy(base_config_data)
     data["fleet"][1]["fleet_robot_id"] = data["fleet"][0]["fleet_robot_id"]
     with pytest.raises(ValueError, match="unique"):
-        MyConnectorConfig(**data)
+        MyConnectorConfig(**data, _env_file=None)
+
+
+def test_invalid_connector_type_rejected(base_config_data: dict) -> None:
+    data = copy.deepcopy(base_config_data)
+    data["connector_type"] = "not-my_target"
+    with pytest.raises(ValueError, match="does not match CONNECTOR_TYPE"):
+        MyConnectorConfig(**data, _env_file=None)
 ```
 
 ### Command Handler Tests
