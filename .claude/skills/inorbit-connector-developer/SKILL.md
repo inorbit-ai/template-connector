@@ -57,6 +57,13 @@ These patterns appear in older connectors and in training data. Never use:
 | `SettingsConfigDict(env_prefix=...)` on vendor config | set `CONNECTOR_TYPE` class var | v3 derives the `INORBIT_{TYPE}_` prefix automatically |
 | `account_id` config field | (removed) | v3 resolves the account ID automatically via the edge SDK |
 | `"customCommand"` string literal | `COMMAND_CUSTOM_COMMAND` from `inorbit_edge.robot` | Use the constant, not a magic string |
+| `inorbit_edge.metrics.get_meter("inorbit_acme_connector")` in vendor code | `inorbit_connector.metrics.get_connector_meter("acme")` | Wrapper adds the vendor prefix; CI lint flags direct `get_meter` |
+| `meter.create_counter("acme.api.errors", ...)` after `get_connector_meter("acme")` | `meter.create_counter("api.errors", ...)` | Wrapper adds the `acme.` prefix once; doubled prefixes are ugly and easy to drift |
+| Manual `MeterProvider` + `PrometheusMetricReader` + `start_http_server` in connector | `MetricsConfig` in YAML | Framework owns the provider; manual setup causes namespace drift |
+| `record_upstream_http_request(..., endpoint=raw_path)` | `endpoint=EndpointMapper(...)(raw_path)` | Raw paths with IDs pollute the metric descriptor irreversibly on Stackdriver |
+| `record_upstream_http_request` on a 4xx/5xx response | `record_upstream_http_error(..., error_kind="http_4xx"/"http_5xx")` | Successes and errors are separate metrics; mixing them blurs alerting |
+| `meter.create_histogram("api.duration")` with default buckets and 3+ attributes | Pass `explicit_bucket_boundaries=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0)` and drop one attribute | Default OTEL has 16 buckets → 18× the ingestion of a counter. With 3 attribute dimensions that adds up to ~500MB/month per histogram. See [reference/metrics.md](reference/metrics.md) |
+| `attributes={"error_message": str(e)}` | `attributes={"error_kind": type(e).__name__}` | Exception strings are unbounded; bucket by class instead |
 
 ## Entry Points
 
@@ -185,11 +192,12 @@ Read [reference/framework-api.md](reference/framework-api.md) and [reference/imp
 
 Implement in this order:
 1. **Configuration models** (`src/config/models.py`) — `ConnectorSpecificConfig` subclass (vendor fields, with `CONNECTOR_TYPE`), `RobotConfig` subclass (per-robot fields), and a `ConnectorRootConfig[...]` parametrization (top level + domain validators). The cookiecutter prefills this file.
-2. **API client** (`src/api/client.py`) — httpx.AsyncClient, retry, auth, SSL
+2. **API client** (`src/api/client.py`) — httpx.AsyncClient, retry, auth, SSL. **Record every request through `record_upstream_http_request()` / `record_upstream_http_error()`** from `inorbit_connector.metrics.http` — see [reference/metrics.md](reference/metrics.md).
 3. **Data poller** (`src/api/data_poller.py`) — background polling, local cache, getters
 4. **Command models** (`src/commands.py`) — StrEnum scripts, CommandModel validation
 5. **Main connector** (`src/connector.py`) — FleetConnector or Connector subclass with all overrides
-6. **Entry point** — YAML config loading, signal handling
+6. **Domain metrics** (`src/metrics.py`) — `get_connector_meter(CONNECTOR_TYPE)` + module-level instruments for vendor-specific signals worth alerting on. See [reference/metrics.md](reference/metrics.md). Skip this file if you have no domain instruments to add (framework + canonical HTTP cover most needs).
+7. **Entry point** — YAML config loading, signal handling
 
 ### Phase 7: CaC Configuration
 
@@ -255,3 +263,6 @@ See [guidelines.md](guidelines.md) for full details. Key points:
 - [ ] README documentation complete
 - [ ] Docker packaging working
 - [ ] Dependency versions specified with compatible ranges (`~=`)
+- [ ] Every HTTP call goes through `record_upstream_http_request()` or `record_upstream_http_error()` with a normalized `endpoint` (see [reference/metrics.md](reference/metrics.md))
+- [ ] Any vendor-specific domain instruments use `get_connector_meter(CONNECTOR_TYPE)` — never `inorbit_edge.metrics.get_meter` directly
+- [ ] No raw paths, exception messages, or unbounded values passed as metric attributes
