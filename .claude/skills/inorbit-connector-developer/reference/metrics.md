@@ -80,7 +80,7 @@ If your connector subclasses `FleetConnector` or `Connector` and opts in via the
 | `inorbit_connector_upstream_http_duration_seconds` | Histogram | `vendor`, `method`, `endpoint` | Latency of all upstream HTTP calls (recorded on both paths) |
 | `calls_publish_*_total` (8 of them) | Counter | `robot_id` | SDK-level publish call counts (pose, map, odometry, …) |
 
-Every metric also carries Resource attributes set by `setup_prometheus_metrics`: `service.name=inorbit_connector`, `service.instance.id`, `service.version`, `inorbit.connector.type`, `inorbit.connector.id`, plus any `account_id` / `location_id` from `ConnectorRootConfig`. Use these as filter dimensions in MQL / PromQL.
+Every metric also carries Resource attributes set by `setup_prometheus_metrics`: `service.name=inorbit_connector`, `service.instance.id`, `service.version`, `inorbit.connector.type`, `inorbit.connector.id`, plus any `account_id` / `location_id` from `ConnectorRootConfig`. The reference collector promotes these to series labels — use them as filter dimensions in PromQL.
 
 **You don't declare any of these yourself.** They're emitted by the framework on your behalf. Your job is to add domain instruments for things the framework doesn't know about (upstream API health, robot domain state, etc.).
 
@@ -157,17 +157,17 @@ record_upstream_http_error(
 
 The attribute schemas are frozen by the framework. You cannot add keys. If you need more dimensions for vendor-specific debugging, add a separate domain counter under Layer 1.
 
-Cross-vendor MQL queries work without metric-name fan-out:
+Cross-vendor queries work without metric-name fan-out (PromQL — metrics land in GCP as the Prometheus descriptor type via the `googlemanagedprometheus` exporter):
 
-```
+```promql
 # Total upstream errors by vendor and kind
-fetch inorbit_connector_upstream_http_errors_total
-| group_by [vendor, error_kind, 5m], rate()
+sum by (vendor, error_kind) (rate(inorbit_connector_upstream_http_errors_total[5m]))
 
 # Error rate across all vendors
-{ fetch inorbit_connector_upstream_http_errors_total | group_by [], rate()
-  ; fetch inorbit_connector_upstream_http_requests_total | group_by [], rate() }
-| join | div
+sum(rate(inorbit_connector_upstream_http_errors_total[5m]))
+/
+(sum(rate(inorbit_connector_upstream_http_requests_total[5m]))
+ + sum(rate(inorbit_connector_upstream_http_errors_total[5m])))
 ```
 
 ## Endpoint cardinality is the #1 footgun
@@ -371,37 +371,34 @@ Domain metrics don't appear in `cac/data_sources.yaml`. They're for operational 
 
 ## Querying
 
-In Cloud Monitoring (Stackdriver), the metric names exported by this framework are:
+The reference collector ships metrics to GCP via the `googlemanagedprometheus` exporter, which writes them as the Prometheus descriptor type (`prometheus.googleapis.com/...`). **PromQL is the query surface** — in the Cloud Monitoring console and in Grafana (Managed Service for Prometheus datasource). Descriptor names carry a type suffix (`.../inorbit_connector_up/gauge`); in PromQL you query by the bare wire name.
+
+The metric names exported by this framework:
 
 - Framework: `inorbit_connector_up`, `inorbit_connector_session_connected`, `inorbit_connector_execution_loop_*`
 - SDK: `calls_publish_*_total`
 - Canonical: `inorbit_connector_upstream_http_requests_total`, `inorbit_connector_upstream_http_errors_total`, `inorbit_connector_upstream_http_duration_*`
 - Vendor domain: `inorbit_connector_<vendor>_*`
 
-Cross-connector aggregation works on every metric **except** Vendor domain (where per-vendor names are intentional — `mir.api.errors` and `otto.api.errors` aren't the same thing).
+Cross-connector aggregation works on every metric **except** Vendor domain (where per-vendor names are intentional — `mir.api.errors` and `otto.api.errors` aren't the same thing). Slicing labels: `connector_type` and `customer` (promoted by the collector), `instance` (= connector_id, from the `prometheus_target` monitored resource).
 
 Example queries:
 
-```
-# Are all connectors healthy?
-fetch inorbit_connector_up
-| group_by [inorbit_connector_type, inorbit_connector_id], min(value)
-| filter value == 0
+```promql
+# Are any connectors down?
+min by (connector_type, instance) (inorbit_connector_up) == 0
 
 # Upstream API errors per vendor, broken down by failure mode
-fetch inorbit_connector_upstream_http_errors_total
-| group_by [vendor, error_kind, 5m], rate()
+sum by (vendor, error_kind) (rate(inorbit_connector_upstream_http_errors_total[5m]))
 
 # Error rate (errors / total) per vendor
-{ fetch inorbit_connector_upstream_http_errors_total | group_by [vendor], rate()
-  ; { fetch inorbit_connector_upstream_http_errors_total | group_by [vendor], rate()
-      ; fetch inorbit_connector_upstream_http_requests_total | group_by [vendor], rate() }
-    | join | add }
-| join | div
+sum by (vendor) (rate(inorbit_connector_upstream_http_errors_total[5m]))
+/
+(sum by (vendor) (rate(inorbit_connector_upstream_http_requests_total[5m]))
+ + sum by (vendor) (rate(inorbit_connector_upstream_http_errors_total[5m])))
 
 # Specific vendor: missions failing
-fetch inorbit_connector_acme_mission_failures_total
-| group_by [reason, 5m], rate()
+sum by (reason) (rate(inorbit_connector_acme_mission_failures_total[5m]))
 ```
 
 ## Further reading
