@@ -267,6 +267,37 @@ class RobotConfig(BaseModel):
 
 Extend this for per-robot settings (e.g., `fleet_robot_id`, credentials).
 
+### MetricsConfig
+
+Opt-in Prometheus / OpenTelemetry metrics endpoint. Defaults to disabled.
+
+```python
+class MetricsConfig(BaseModel):
+    enabled: bool = False
+    bind_host: str = "0.0.0.0"
+    bind_port: int = 9090
+    discovery_dir: Path | None = Path("/var/run/inorbit-metrics")
+    exporter_namespace: str | None = None     # framework uses "inorbit_connector" by default
+    extra_resource_attributes: dict[str, str] = {}
+```
+
+When `enabled=True`, the framework installs a process-global OpenTelemetry `MeterProvider` with a `PrometheusMetricReader` and starts an HTTP server serving `/metrics`. It also writes a Prometheus `file_sd`-format JSON file to `discovery_dir` so a host-side OTEL collector can discover the endpoint.
+
+Framework emits these instruments automatically:
+
+- `inorbit_connector_up` (gauge)
+- `inorbit_connector_session_connected{robot_id}` (gauge)
+- `inorbit_connector_execution_loop_ticks_total` / `..._errors_total` (counters)
+- SDK publish counters: `calls_publish_pose_total{robot_id}`, `calls_publish_map_total{robot_id}`, … (8 of them)
+- Canonical upstream HTTP:
+  - `inorbit_connector_upstream_http_requests_total{vendor,method,endpoint}` — successes only
+  - `inorbit_connector_upstream_http_errors_total{vendor,method,endpoint,error_kind}` — failures only
+  - `inorbit_connector_upstream_http_duration_seconds{vendor,method,endpoint}` — latency, recorded on both paths
+
+Connectors that want their own domain instruments use `inorbit_connector.metrics.get_connector_meter(CONNECTOR_TYPE)` — see [metrics.md](metrics.md) for the full guide and the `record_upstream_http_request()` / `record_upstream_http_error()` / `EndpointMapper` / `PathTemplater` helpers.
+
+**Do not** instantiate `MeterProvider` / `PrometheusMetricReader` / `start_http_server` manually in a connector — the framework owns the provider, and parallel setup causes namespace drift across deployments.
+
 ### MapConfigTemp
 
 ```python

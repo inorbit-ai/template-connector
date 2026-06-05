@@ -91,6 +91,18 @@ class CustomScripts(StrEnum):
     RESUME_ROBOT = "resume_robot"
 ```
 
+## Metrics
+
+See [reference/metrics.md](reference/metrics.md) for the full guide. Critical rules:
+
+- **Get a meter via `get_connector_meter(CONNECTOR_TYPE)`**, never via `inorbit_edge.metrics.get_meter(...)` in vendor code.
+- **Drop the vendor prefix from instrument names** — the wrapper adds `<connector_type>.` automatically. Write `meter.create_counter("mission.failures")`, not `meter.create_counter("acme.mission.failures")`.
+- **Record every HTTP call through the framework helpers**: `record_upstream_http_request()` on success, `record_upstream_http_error()` on failure (timeout, connect failure, non-2xx). Both live in `inorbit_connector.metrics.http`. Don't roll your own request/error counters.
+- **Always normalize the `endpoint` attribute** via `EndpointMapper` (preferred) or `PathTemplater` before passing to either helper. Raw paths containing IDs/UUIDs irreversibly pollute the metric descriptor on Stackdriver.
+- **Never declare your own `MeterProvider` / `PrometheusMetricReader` / `start_http_server`.** The framework wires the provider once when `MetricsConfig.enabled=True`.
+- **Bounded attribute values only** — enums, classification buckets, IDs from a known small set. No exception messages, raw URLs, or user input.
+- **Size histogram buckets explicitly.** OTEL's default 15-boundary histogram emits 18 values per scrape per attribute combination — ~18× the ingestion cost of a counter. Pass `explicit_bucket_boundaries=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0)` (or whatever fits your latency range) and keep histograms to ≤2 attribute dimensions.
+
 ## Testing
 
 - **Framework**: pytest with pytest-asyncio for async tests
